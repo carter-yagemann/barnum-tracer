@@ -1,0 +1,6 @@
+/tools/astyle/.*
+/tools/astyle/astyle
+*.swp
+/tools/bin/*
+/vm/pt-pdf-base.qcow3
+/TODO
