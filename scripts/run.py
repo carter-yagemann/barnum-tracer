@@ -86,7 +86,7 @@ def run_job(job):
     # Pause VM and create a memory dump
     qemu.stdin.write("stop\n")
     qemu.stdin.write("dump-guest-memory " + trace_path + "/dump.qemu\n")
-    sleep(20) # Allow time for dump to finish
+    sleep(25) # Allow time for dump to finish
     # Scan dump to get CR3 using volatility
     cr3 = 0
     pid = 0
@@ -114,6 +114,8 @@ def run_job(job):
         print 'ERROR: Failed to find Acrobat Reader CR3'
         qemu.stdin.write("quit\n")
         qemu.stdin.close()
+        qemu.kill()
+        sleep(10) # Allow time for VM to terminate
         return
     # Configure PT
     qemu.stdin.write("pt cr3_filtering 0 " + str(cr3) + "\n")
@@ -154,7 +156,14 @@ def run_job(job):
                      trace_path + '/mem/mapping.csv'])
     print 'VERBOSE: Disassembling', job['pdf_name']
     disasm = subprocess.Popen([getcwd() + '/tools/bin/disasm', 'trace_0.griffin', 'mem/symbols.csv'], cwd=trace_path)
-    disasm.wait()
+    timeout = 180 # 3 minutes
+    while disasm.poll() == None:
+        sleep(5)
+        timeout -= 5
+        print 'VERBOSE: Timeout in', timeout, 'seconds'
+        if timeout < 1:
+            disasm.terminate()
+            break
     print 'VERBOSE: Compressing disassembly for', job['pdf_name']
     subprocess.call(['gzip', trace_path + '/0.txt'])
     print 'VERBOSE: Finished', job['pdf_name']
