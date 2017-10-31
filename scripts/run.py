@@ -8,8 +8,13 @@ import sys
 import tempfile
 from time import sleep
 
+def sha256(filepath):
+    sha256sum = subprocess.Popen(['sha256sum', filepath], stdout=subprocess.PIPE)
+    hash = sha256sum.stdout.readline().split(' ')[0]
+    sha256sum.terminate()
+    return hash
+
 def prepare_jobs(temp_dir):
-    id = 0
     jobs = []
     base_img = path.join(getcwd(), 'vm/pt-pdf-base.qcow3')
     nbd_path = '/home/carter/pdf-analysis/kAFL/qemu-2.9.0/qemu-nbd' # TODO - Resolve this instead of hardcoding
@@ -22,6 +27,7 @@ def prepare_jobs(temp_dir):
             continue # entry doesn't have pdf extension
         print 'VERBOSE: preparing job for', entry
         pdf_filepath = 'pdfs/' + entry
+        id = sha256(pdf_filepath)
         # Create VM disk for job
         vm_disk = temp_dir + '/' + str(id) + '.qcow2'
         ret = subprocess.call(['qemu-img', 'create', '-f', 'qcow2', '-o', 'backing_file=' + base_img, vm_disk])
@@ -47,7 +53,6 @@ def prepare_jobs(temp_dir):
             print 'ERROR: qemu-nbd returned code', ret
             return jobs # Fatal, cannot continue
         jobs.append({'id': id, 'pdf_name': entry, 'pdf_filepath': pdf_filepath, 'vm_disk': vm_disk, 'base_img': base_img})
-        id += 1
     return jobs
 
 def run_job(job):
@@ -55,11 +60,14 @@ def run_job(job):
     qemu_path = '/home/carter/pdf-analysis/kAFL/qemu-2.9.0/x86_64-softmmu/qemu-system-x86_64'
     nbd_path = '/home/carter/pdf-analysis/kAFL/qemu-2.9.0/qemu-nbd'
     trace_path = 'traces/' + str(job['id'])
+    if path.isdir(trace_path):
+        print 'VERBOSE: A trace already exists for', job['pdf_name'], 'skipping...'
+        return
     print 'VERBOSE: Creating output directory for', job['pdf_name']
     try:
         mkdir(trace_path)
     except:
-        print 'ERROR: Failed to create dir', trace_path, ', does it already exist?'
+        print 'ERROR: Failed to create dir', trace_path
         return
     with open(trace_path + '/info.txt', 'w') as info_file:
         info_file.write(job['pdf_name'] + "\n")

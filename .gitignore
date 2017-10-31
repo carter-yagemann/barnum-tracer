@@ -4,3 +4,5 @@
 /tools/bin/*
 /vm/pt-pdf-base.qcow3
 /TODO
+/pdfs/*.pdf
+/traces/*
