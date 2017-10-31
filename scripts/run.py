@@ -121,7 +121,7 @@ def run_job(job):
     qemu.stdin.write("pt enable 0\n")
     # Resume VM and let Acrobat Reader run
     qemu.stdin.write("cont\n")
-    sleep(15)
+    sleep(60)
     # Disable PT and destroy VM
     qemu.stdin.write("pt disable 0\n")
     qemu.stdin.write("pt disable 0\n") # TODO - Workaround for bug in QEMU-PT
