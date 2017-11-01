@@ -60,15 +60,18 @@ def run_job(job):
     qemu_path = '/home/carter/pdf-analysis/kAFL/qemu-2.9.0/x86_64-softmmu/qemu-system-x86_64'
     nbd_path = '/home/carter/pdf-analysis/kAFL/qemu-2.9.0/qemu-nbd'
     trace_path = 'traces/' + str(job['id'])
-    if path.isdir(trace_path):
+    if path.isdir(trace_path) and path.isfile(trace_path + '/0.txt.gz'):
         print 'VERBOSE: A trace already exists for', job['pdf_name'], 'skipping...'
         return
-    print 'VERBOSE: Creating output directory for', job['pdf_name']
-    try:
-        mkdir(trace_path)
-    except:
-        print 'ERROR: Failed to create dir', trace_path
-        return
+    elif path.isdir(trace_path):
+        print 'VERBOSE: A trace directory exists for', job['pdf_name'], 'but it does not contain a trace'
+    else:
+        print 'VERBOSE: Creating output directory for', job['pdf_name']
+        try:
+            mkdir(trace_path)
+        except:
+            print 'ERROR: Failed to create dir', trace_path
+            return
     with open(trace_path + '/info.txt', 'w') as info_file:
         info_file.write(job['pdf_name'] + "\n")
     print 'VERBOSE: Starting VM for', job['pdf_name']
@@ -115,6 +118,7 @@ def run_job(job):
         qemu.stdin.write("quit\n")
         qemu.stdin.close()
         qemu.kill()
+        subprocess.call(['rm', '-rf', trace_path])
         sleep(10) # Allow time for VM to terminate
         return
     # Configure PT
@@ -131,6 +135,7 @@ def run_job(job):
     qemu.stdin.close()
     # Postmortem analysis
     print 'VERBOSE: Starting postmortem analysis for', job['pdf_name']
+    # Extract static code from EXEs and DLLs
     ofile = open('/tmp/dll-list.txt', 'w')
     subprocess.call(['volatility',
                      'ldrmodules',
@@ -150,10 +155,12 @@ def run_job(job):
     subprocess.call(['rm', '-rf', '/tmp/mount'])
     subprocess.call(['rm', '/tmp/dll-list.txt'])
     print 'VERBOSE: Merging PT trace with static code for', job['pdf_name']
+    # Convert pure PT trace into GRIFFIN trace with static code embedded
     subprocess.call(['./tools/bin/pt2griffin',
                      trace_path + '/trace_0',
                      trace_path + '/trace_0.griffin',
                      trace_path + '/mem/mapping.csv'])
+    # Disassemble into instruction trace (with timeout)
     print 'VERBOSE: Disassembling', job['pdf_name']
     disasm = subprocess.Popen([getcwd() + '/tools/bin/disasm', 'trace_0.griffin', 'mem/symbols.csv'], cwd=trace_path)
     timeout = 180 # 3 minutes
@@ -165,7 +172,11 @@ def run_job(job):
             disasm.terminate()
             break
     print 'VERBOSE: Compressing disassembly for', job['pdf_name']
+    # Compress results and delete dump.qemu to save space
     subprocess.call(['gzip', trace_path + '/0.txt'])
+    subprocess.call(['gzip', trace_path + '/trace_0'])
+    subprocess.call(['gzip', trace_path + '/trace_0.griffin'])
+    subprocess.call(['rm', '-f', trace_path + '/dump.qemu'])
     print 'VERBOSE: Finished', job['pdf_name']
 
 def perform_checks():
@@ -185,9 +196,12 @@ if __name__ == '__main__':
         sys.exit()
     temp_dir = tempfile.mkdtemp()
     jobs = prepare_jobs(temp_dir)
-    if len(jobs) < 1:
+    remaining_jobs = len(jobs)
+    if remaining_jobs < 1:
         print 'ERROR: No jobs found'
         sys.exit()
     for job in jobs:
         run_job(job)
+        remaining_jobs -= 1
+        print 'VERBOSE:', remaining_jobs, 'jobs remaining...'
     subprocess.call(['rm', '-rf', temp_dir])
