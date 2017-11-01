@@ -197,6 +197,10 @@ def perform_checks():
 if __name__ == '__main__':
     if not perform_checks():
         sys.exit()
+    if len(sys.argv) < 2:
+        res = raw_input("No label set, continue? [y/n]: ").lower()
+        if not 'y' in res:
+            sys.exit()
     temp_dir = tempfile.mkdtemp()
     jobs = prepare_jobs(temp_dir)
     remaining_jobs = len(jobs)
