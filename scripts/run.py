@@ -74,6 +74,8 @@ def run_job(job):
             return
     with open(trace_path + '/info.txt', 'w') as info_file:
         info_file.write(job['pdf_name'] + "\n")
+        if len(sys.argv) > 1:
+            info_file.write(sys.argv[1] + "\n")
     print 'VERBOSE: Starting VM for', job['pdf_name']
     qemu = subprocess.Popen([qemu_path,
                              '-enable-kvm',
@@ -144,7 +146,8 @@ def run_job(job):
                      '-p', str(pid)],
                      stdout=ofile)
     ofile.close()
-    mkdir(trace_path + '/mem')
+    if not path.isdir(trace_path + '/mem'):
+        mkdir(trace_path + '/mem')
     mkdir('/tmp/mount')
     subprocess.call(['sudo', nbd_path, '--connect=/dev/nbd0', job['base_img'], '-P', '2'])
     subprocess.call(['sudo', 'mount', '/dev/nbd0', '/tmp/mount'])
