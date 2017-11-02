@@ -129,7 +129,7 @@ def run_job(job):
     qemu.stdin.write("pt enable 0\n")
     # Resume VM and let Acrobat Reader run
     qemu.stdin.write("cont\n")
-    sleep(60)
+    sleep(60) # trace 1 minute of execution
     # Disable PT and destroy VM
     qemu.stdin.write("pt disable 0\n")
     qemu.stdin.write("pt disable 0\n") # TODO - Workaround for bug in QEMU-PT
@@ -166,7 +166,7 @@ def run_job(job):
     # Disassemble into instruction trace (with timeout)
     print 'VERBOSE: Disassembling', job['pdf_name']
     disasm = subprocess.Popen([getcwd() + '/tools/bin/disasm', 'trace_0.griffin', 'mem/symbols.csv'], cwd=trace_path)
-    timeout = 180 # 3 minutes
+    timeout = 300 # 5 minutes
     while disasm.poll() == None:
         sleep(5)
         timeout -= 5
