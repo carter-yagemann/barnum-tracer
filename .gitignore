@@ -7,3 +7,4 @@
 /pdfs/*.pdf
 /traces/*
 /scripts/upload.py
+/scripts/start-wondershaper.sh
