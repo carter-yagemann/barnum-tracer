@@ -8,6 +8,19 @@ import sys
 import tempfile
 from time import sleep
 
+def check_qemu_version():
+    qemu_path = lookup_bin('qemu-system-x86_64')
+    if qemu_path == '':
+        return False
+    p = subprocess.Popen([qemu_path, '--version'], stdout=subprocess.PIPE)
+    if not 'QEMU-PT' in p.stdout.read():
+        return False
+    return True
+
+def lookup_bin(name):
+    p = subprocess.Popen(['which', name], stdout=subprocess.PIPE)
+    return p.stdout.read().strip()
+
 def sha256(filepath):
     sha256sum = subprocess.Popen(['sha256sum', filepath], stdout=subprocess.PIPE)
     hash = sha256sum.stdout.readline().split(' ')[0]
@@ -17,7 +30,10 @@ def sha256(filepath):
 def prepare_jobs(temp_dir):
     jobs = []
     base_img = path.join(getcwd(), 'vm/pt-pdf-base.qcow3')
-    nbd_path = '/home/carter/pdf-analysis/kAFL/qemu-2.9.0/qemu-nbd' # TODO - Resolve this instead of hardcoding
+    nbd_path = lookup_bin('qemu-nbd')
+    if nbd_path == '':
+        print 'ERROR: Cannot find qemu-nbd'
+        return jobs # Fatal, cannot continue
     if type(temp_dir) != str:
         return jobs
     mkdir(temp_dir + '/mount')
@@ -55,12 +71,70 @@ def prepare_jobs(temp_dir):
         jobs.append({'id': id, 'pdf_name': entry, 'pdf_filepath': pdf_filepath, 'vm_disk': vm_disk, 'base_img': base_img})
     return jobs
 
+def vol_cr3_lookup(qemu, trace_path):
+    # Pause VM and create a memory dump
+    exec_cmd(qemu, "stop")
+    exec_cmd(qemu, "dump-guest-memory " + trace_path + "/dump.qemu")
+    # Scan dump to get CR3 using volatility
+    cr3 = 0
+    pid = 0
+    vol = subprocess.Popen(['volatility',
+                            'psscan',
+                            '--profile', 'Win7SP1x64',
+                            '--output=json',
+                            '-f', trace_path + '/dump.qemu'],
+                            stdout=subprocess.PIPE)
+    try:
+        res = json.loads(vol.stdout.readline())
+    except:
+        print 'ERROR: Failed to read JSON from volatility'
+        vol.terminate()
+        return (0, 0)
+    vol.terminate()
+    for row in res['rows']:
+        if row[1] != u'AcroRd32.exe':
+            continue
+        try:
+            pid = row[2]
+            cr3 = row[4]
+        except:
+            print 'WARNING: Could not parse PID and/or CR3 from', row[2], row[4]
+            pass
+        break
+    exec_cmd(qemu, "cont")
+    if cr3 > 0 and pid > 0:
+        print 'VERBOSE: Found Acrobat Reader CR3 and PID -', cr3, pid
+        return (cr3, pid)
+    else:
+        print 'ERROR: Failed to find Acrobat Reader CR3'
+        return (0, 0)
+
+def exec_cmd(qemu, command):
+    qemu.stdin.write(str(command) + "\n")
+    sys.stdout.write(qemu.stdout.readline())
+
+def flush_qemu(qemu):
+    char = ''
+    while char != ')':
+        char = qemu.stdout.read(1)
+        sys.stdout.write(char)
+        sys.stdout.flush()
+
+def terminate_qemu(qemu, force=False):
+        qemu.stdin.write("quit\n")
+        qemu.stdin.close()
+        if force:
+            qemu.kill()
+        sleep(10) # Allow time for VM to terminate
+
 def run_job(job):
-    # TODO - Resolve this instead of hardcoding
-    qemu_path = '/home/carter/pdf-analysis/kAFL/qemu-2.9.0/x86_64-softmmu/qemu-system-x86_64'
-    nbd_path = '/home/carter/pdf-analysis/kAFL/qemu-2.9.0/qemu-nbd'
+    qemu_path = lookup_bin('qemu-system-x86_64')
+    nbd_path = lookup_bin('qemu-nbd')
+    if qemu_path == '' or nbd_path == '':
+        print 'ERROR: Cannot find qemu-system-x86_64 and/or qemu-nbd'
+        return
     trace_path = 'traces/' + str(job['id'])
-    if path.isdir(trace_path) and path.isfile(trace_path + '/0.txt.gz'):
+    if path.isdir(trace_path) and path.isfile(trace_path + '/trace_0.gz'):
         print 'VERBOSE: A trace already exists for', job['pdf_name'], 'skipping...'
         return
     elif path.isdir(trace_path):
@@ -81,64 +155,43 @@ def run_job(job):
                              '-enable-kvm',
                              '-cpu', 'host',
                              '-hda', job['vm_disk'],
-                             '-m', '4G',
+                             '-m', '2G',
                              '-balloon', 'virtio',
                              '-vga', 'cirrus',
                              '-vnc', ':0',
                              '-monitor', 'stdio'],
-                             stdin=subprocess.PIPE)
+                             stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE)
+    flush_qemu(qemu)
     sleep(15) # Give time for Windows VM to boot
-    # Pause VM and create a memory dump
-    qemu.stdin.write("stop\n")
-    qemu.stdin.write("dump-guest-memory " + trace_path + "/dump.qemu\n")
-    sleep(25) # Allow time for dump to finish
-    # Scan dump to get CR3 using volatility
-    cr3 = 0
-    pid = 0
-    vol = subprocess.Popen(['volatility',
-                            'psscan',
-                            '--profile', 'Win7SP1x64',
-                            '--output=json',
-                            '-f', trace_path + '/dump.qemu'],
-                            stdout=subprocess.PIPE)
-    res = json.loads(vol.stdout.readline())
-    vol.terminate()
-    for row in res['rows']:
-        if row[1] != u'AcroRd32.exe':
-            continue
-        try:
-            pid = row[2]
-            cr3 = row[4]
-        except:
-            print 'ERROR: Could not parse PID and/or CR3 from', row[2], row[4]
-            pass
-        break
-    if cr3 > 0 and pid > 0:
-        print 'VERBOSE: Found Acrobat Reader CR3 and PID -', cr3, pid
-    else:
-        print 'ERROR: Failed to find Acrobat Reader CR3'
-        qemu.stdin.write("quit\n")
-        qemu.stdin.close()
-        qemu.kill()
+    print 'VERBOSE: Attempting to extract CR3 and PID for Acrobat Reader'
+    for attempt in range(1, 4): # Try 3 times to extract CR3
+        cr3, pid = vol_cr3_lookup(qemu, trace_path)
+        if cr3 > 0 and pid > 0:
+            break
+        print 'WARNING: Attempt', attempt, 'of 4 failed...'
+    if cr3 == 0 and pid == 0:
+        terminate_qemu(qemu, True)
         subprocess.call(['rm', '-rf', trace_path])
-        sleep(10) # Allow time for VM to terminate
         return
     # Configure PT
-    qemu.stdin.write("pt cr3_filtering 0 " + str(cr3) + "\n")
-    qemu.stdin.write("pt set_file " + trace_path + "/trace\n")
-    qemu.stdin.write("pt enable 0\n")
+    print 'VERBOSE: Configuring PT...'
+    exec_cmd(qemu, "stop")
+    exec_cmd(qemu, "pt cr3_filtering 0 " + str(cr3))
+    exec_cmd(qemu, "pt set_file " + trace_path + "/trace")
+    exec_cmd(qemu, "pt enable 0")
     # Resume VM and let Acrobat Reader run
-    qemu.stdin.write("cont\n")
+    exec_cmd(qemu, "cont")
+    print 'VERBOSE: Executing for 1 minute...'
     sleep(60) # trace 1 minute of execution
     # Disable PT and destroy VM
-    qemu.stdin.write("pt disable 0\n")
-    qemu.stdin.write("pt disable 0\n") # TODO - Workaround for bug in QEMU-PT
-    qemu.stdin.write("quit\n")
-    qemu.stdin.close()
+    exec_cmd(qemu, "pt disable 0")
+    terminate_qemu(qemu)
     # Postmortem analysis
     print 'VERBOSE: Starting postmortem analysis for', job['pdf_name']
-    # Extract static code from EXEs and DLLs
-    ofile = open('/tmp/dll-list.txt', 'w')
+    # Extract memory mapping
+    maps_filepath = trace_path + '/mapping.txt'
+    ofile = open(maps_filepath, 'w')
     subprocess.call(['volatility',
                      'ldrmodules',
                      '--profile', 'Win7SP1x64',
@@ -146,39 +199,9 @@ def run_job(job):
                      '-p', str(pid)],
                      stdout=ofile)
     ofile.close()
-    if not path.isdir(trace_path + '/mem'):
-        mkdir(trace_path + '/mem')
-    mkdir('/tmp/mount')
-    subprocess.call(['sudo', nbd_path, '--connect=/dev/nbd0', job['base_img'], '-P', '2'])
-    subprocess.call(['sudo', 'mount', '/dev/nbd0', '/tmp/mount'])
-    gen = subprocess.Popen([getcwd() + '/scripts/gen-mapping.py', '/tmp/mount'], cwd=trace_path + '/mem')
-    gen.wait()
-    subprocess.call(['sudo', 'umount', '/tmp/mount'])
-    subprocess.call(['sudo', nbd_path, '--disconnect', '/dev/nbd0'])
-    subprocess.call(['rm', '-rf', '/tmp/mount'])
-    subprocess.call(['rm', '/tmp/dll-list.txt'])
-    print 'VERBOSE: Merging PT trace with static code for', job['pdf_name']
-    # Convert pure PT trace into GRIFFIN trace with static code embedded
-    subprocess.call(['./tools/bin/pt2griffin',
-                     trace_path + '/trace_0',
-                     trace_path + '/trace_0.griffin',
-                     trace_path + '/mem/mapping.csv'])
-    # Disassemble into instruction trace (with timeout)
-    print 'VERBOSE: Disassembling', job['pdf_name']
-    disasm = subprocess.Popen([getcwd() + '/tools/bin/disasm', 'trace_0.griffin', 'mem/symbols.csv'], cwd=trace_path)
-    timeout = 300 # 5 minutes
-    while disasm.poll() == None:
-        sleep(5)
-        timeout -= 5
-        print 'VERBOSE: Timeout in', timeout, 'seconds'
-        if timeout < 1:
-            disasm.terminate()
-            break
-    print 'VERBOSE: Compressing disassembly for', job['pdf_name']
     # Compress results and delete dump.qemu to save space
-    subprocess.call(['gzip', trace_path + '/0.txt'])
     subprocess.call(['gzip', trace_path + '/trace_0'])
-    subprocess.call(['gzip', trace_path + '/trace_0.griffin'])
+    subprocess.call(['gzip', maps_filepath])
     subprocess.call(['rm', '-f', trace_path + '/dump.qemu'])
     print 'VERBOSE: Finished', job['pdf_name']
 
@@ -191,7 +214,9 @@ def perform_checks():
     if not path.exists('/dev/nbd0'):
         print 'ERROR: Cannot find QEMU network block device /dev/nbd0, did you run `sudo modprobe nbd`?'
         return False
-    # TODO - QEMU checks
+    if not check_qemu_version():
+        print 'ERROR: Cannot find QEMU or QEMU version is not QEMU-PT'
+        return False
     return True
 
 if __name__ == '__main__':
