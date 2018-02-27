@@ -1,3 +1,6 @@
 [submodule "kAFL"]
 	path = kAFL
 	url = git@github.gatech.edu:cyagemann3/kAFL.git
+[submodule "tools"]
+	path = tools
+	url = git@github.gatech.edu:cyagemann3/pt-pdf-tools.git
