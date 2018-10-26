@@ -1,0 +1,28 @@
+# Anything that starts with a crunch is a comment!
+# This example demonstrates how one might trace PDFs.
+
+# save should always be the first command.
+# It saves the input sample to a filepath.
+save C:\file.pdf
+
+# Next, we use async to start Acrobat Reader without blocking.
+async "C:\Program Files (x86)\Adobe\Reader 9.0\Reader\AcroRd32.exe"
+
+# sleep a few seconds while it starts up.
+sleep 5
+
+# Now tell the host to use VMI to find the AcroRd32.exe CR3, PID, etc.
+# Note that this command is blocking and must be called before the pt
+# command can be used.
+vmi AcroRd32.exe
+
+# At this point the host is ready to trace Acrobat Reader. Let's do it!
+# Note that once the pt command is sent, the server hangs up so we can't
+# use the pt or vmi commands anymore.
+pt
+
+# Now that pt is running, open the file. Note that exec is like async,
+# but blocking.
+exec C:\file.pdf
+
+# And that's it!
