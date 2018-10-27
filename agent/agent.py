@@ -97,8 +97,6 @@ def parse_and_exec(sock, job):
     """
     cmds = job.split("\n")
     for cmd in cmds:
-        sys.stdout.write(cmd + "\n")
-        sys.stdout.flush()
         cmd_len = len(cmd)
 
         if cmd_len >= 1 and cmd[0] == '#':

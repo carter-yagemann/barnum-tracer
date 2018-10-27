@@ -9,7 +9,7 @@ save C:\file.pdf
 async "C:\Program Files (x86)\Adobe\Reader 9.0\Reader\AcroRd32.exe"
 
 # sleep a few seconds while it starts up.
-sleep 5
+sleep 10
 
 # Now tell the host to use VMI to find the AcroRd32.exe CR3, PID, etc.
 # Note that this command is blocking and must be called before the pt

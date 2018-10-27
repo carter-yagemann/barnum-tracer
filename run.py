@@ -18,7 +18,7 @@
 # along with Barnum.  If not, see <https://www.gnu.org/licenses/>.
 
 import json
-from os import path, listdir, mkdir, getcwd
+from os import path, listdir, mkdir, getcwd, remove
 from shutil import copyfile
 import subprocess
 import sys
@@ -32,6 +32,23 @@ if sys.version_info.major <= 2:
     from ConfigParser import RawConfigParser, NoOptionError
 else:
     from configparser import RawConfigParser, NoOptionError
+
+ifup_script = """#!/bin/sh
+set -x
+
+switch=$BRIDGE$
+
+if [ -n "$1" ];then
+        ip tuntap add $1 mode tap user `whoami`
+        ip link set $1 up
+        sleep 0.5s
+        ip link set $1 master $switch
+        exit 0
+else
+        echo "Error: no interface specified"
+        exit 1
+fi
+"""
 
 # TODO - Remove
 """
@@ -81,6 +98,13 @@ def sha256(filepath):
     return hash
 
 def prepare_jobs():
+    # Create QEMU ifup script
+    ofpath = 'qemu-ifup'
+    with open(ofpath, 'w') as ofile:
+        ofile.write(ifup_script.replace('$BRIDGE$', conf['bridge']))
+    subprocess.call(['chmod', '755', ofpath])
+
+    # Populate jobs list
     jobs = []
     listing = listdir('inputs')
     for entry in listing:
@@ -90,7 +114,8 @@ def prepare_jobs():
         id = sha256(filepath)
         base_img = getcwd() + '/' + options.vm
         jobs.append({'id': id, 'name': entry, 'filepath': filepath, 'vm_disk': None, 'base_img': base_img})
-    return jobs
+
+    return jobs, ofpath
 
 def vol_cr3_lookup(qemu, trace_path, proc_name):
     # Pause VM and create a memory dump
@@ -208,7 +233,7 @@ def recv_file(sock):
 
     return data
 
-def run_job(job, sock):
+def run_job(job, sock, ifup):
     """ Runs one job.
 
     Keyword Arguments:
@@ -264,7 +289,7 @@ def run_job(job, sock):
                              '-balloon', 'virtio',
                              '-vga', 'cirrus',
                              '-device', 'e1000,netdev=net0,mac=98:de:d0:04:cb:ff',
-                             '-netdev', 'tap,id=net0,script=qemu-ifup',
+                             '-netdev', 'tap,id=net0,script=' + ifup,
                              '-vnc', ':0',
                              '-monitor', 'stdio'],
                              stdin=subprocess.PIPE,
@@ -389,6 +414,7 @@ def parse_conf(conf_path):
 
     try:
         settings = {
+            'bridge':   config.get('main', 'bridge'),
             'host_ip':  config.get('main', 'host_ip'),
             'runtime':  config.getint('main', 'runtime'),
             'timeout':  config.getint('main', 'timeout'),
@@ -458,16 +484,20 @@ def main():
     if sock is None:
         log.error("Failed to create socket")
         sys.exit(6)
-    jobs = prepare_jobs()
+    jobs, ifup = prepare_jobs()
 
     jobs_pend = len(jobs)
     if jobs_pend < 1:
         log.error('No jobs found')
         sys.exit(3)
     for job in jobs:
-        run_job(job, sock)
+        run_job(job, sock, ifup)
         jobs_pend -= 1
         log.info(str(jobs_pend) + ' jobs remaining...')
+
+    # Cleanup
+    remove(ifup)
+    sock.close()
 
 if __name__ == '__main__':
     log = logging.getLogger('barnum-tracer')
