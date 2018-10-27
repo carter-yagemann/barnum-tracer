@@ -134,7 +134,7 @@ def parse_and_exec(sock, job):
         elif cmd_len >= 6 and cmd[:6] == 'monkey':
             sys.exit(6)  # TODO - Monkey (scroll, click, etc.)
 
-    sock.shutdown(socket.RDWR)
+    sock.shutdown(socket.SHUT_RDWR)
 
 def main():
     sleep(5)  # Give time for network interfaces to come up

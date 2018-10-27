@@ -368,9 +368,11 @@ def run_job(job, sock):
 
 def perform_checks():
     # Check that we're in the correct working directory
-    if not path.isdir('inputs') or not path.isdir('vm'):
-        log.error('Inputs and/or vm dir(s) missing, am I running in the correct working directory?')
-        return False
+    o_dirs = ['extract', 'inputs', 'traces']
+    for dir in o_dirs:
+        if not path.isdir(dir):
+            log.error('Expected to see ' + dir + ', am I running in the correct working directory?')
+            return False
     # Check that we have a network block device for mounting qcows
     if not path.exists('/dev/nbd0'):
         log.error('Cannot find QEMU network block device /dev/nbd0, did you run `sudo modprobe nbd`?')
@@ -408,8 +410,8 @@ def parse_args():
                         help='Job script to run (default: jobs/example.job)')
     pg_trace.add_option('-v', '--vm', action='store', type='str', default=None,
                         help='VM to execute inputs in.')
-    pg_trace.add_option('-l', '--log-level', action='store', type='int', default=30,
-                        help='Logging level (0 to 50, default: 30).')
+    pg_trace.add_option('-l', '--log-level', action='store', type='int', default=20,
+                        help='Logging level (0 to 50, default: 20).')
     parser.add_option_group(pg_trace)
 
     pg_label = OptionGroup(parser, 'Label Options')
