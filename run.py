@@ -18,7 +18,7 @@
 # along with Barnum.  If not, see <https://www.gnu.org/licenses/>.
 
 import json
-from os import path, listdir, mkdir, getcwd, remove
+import os
 from shutil import copyfile
 import subprocess
 import sys
@@ -78,7 +78,29 @@ fi
             return jobs # Fatal, cannot continue
 """
 
+def watch_file(filepath):
+    """Waits until a file stops growing and then returns.
+
+    Keyword Arguments:
+    filepath -- The file to watch.
+    """
+    if not os.path.isfile(filepath):
+        log.warning(filepath + " is not a file")
+        return
+    curr_size = 0
+    while True:
+        sleep(1)
+        new_size = os.path.getsize(filepath)
+        if new_size == curr_size:
+            break
+        curr_size = new_size
+
 def check_qemu_version():
+    """Finds QEMU and returns its version.
+
+    Returns:
+    True if QEMU version is QEMU-PT, otherwise False.
+    """
     qemu_path = lookup_bin('qemu-system-x86_64')
     if qemu_path == '':
         return False
@@ -88,16 +110,24 @@ def check_qemu_version():
     return True
 
 def lookup_bin(name):
+    """Finds a program using which."""
     p = subprocess.Popen(['which', name], stdout=subprocess.PIPE)
     return p.stdout.read().strip()
 
 def sha256(filepath):
+    """Calculates a SHA256 hash of a file's contents.
+
+    Keyword Arguments:
+    filepath -- The file whose contents should be hashed.
+    """
     sha256sum = subprocess.Popen(['sha256sum', filepath], stdout=subprocess.PIPE)
     hash = sha256sum.stdout.readline().split(' ')[0]
     sha256sum.terminate()
     return hash
 
 def prepare_jobs():
+    """Scan the inputs directory and prepare jobs."""
+    log.info("Preparing job(s)")
     # Create QEMU ifup script
     ofpath = 'qemu-ifup'
     with open(ofpath, 'w') as ofile:
@@ -106,21 +136,32 @@ def prepare_jobs():
 
     # Populate jobs list
     jobs = []
-    listing = listdir('inputs')
+    listing = os.listdir('inputs')
     for entry in listing:
         if entry == 'README':
             continue  # Skip the README file
         filepath = 'inputs/' + entry
         id = sha256(filepath)
-        base_img = getcwd() + '/' + options.vm
+        base_img = os.getcwd() + '/' + options.vm
         jobs.append({'id': id, 'name': entry, 'filepath': filepath, 'vm_disk': None, 'base_img': base_img})
 
     return jobs, ofpath
 
 def vol_cr3_lookup(qemu, trace_path, proc_name):
+    """Dump a QEMU VM's memory and call volatility on it to find the PID and CR3 of a process.
+
+    Keyword Arguments:
+    qemu -- The subprocess object representing the running QEMU instance.
+    trace_path -- The working directory to store dumps in.
+    proc_name -- The VM process to search for.
+
+    Returns:
+    (cr3, pid) if found, otherwise (0, 0).
+    """
     # Pause VM and create a memory dump
     exec_cmd(qemu, "stop")
     exec_cmd(qemu, "dump-guest-memory " + trace_path + "/dump.qemu")
+    watch_file(trace_path + "/dump.qemu")
     subprocess.call(['sudo', 'chmod', 'g+r,o+r', trace_path + "/dump.qemu"])
     # Scan dump to get CR3 using volatility
     cr3 = 0
@@ -130,9 +171,12 @@ def vol_cr3_lookup(qemu, trace_path, proc_name):
                             '--profile', 'Win7SP1x64',
                             '--output=json',
                             '-f', trace_path + '/dump.qemu'],
-                            stdout=subprocess.PIPE)
+                            stdout=subprocess.PIPE,
+                            stderr=DEVNULL)
     try:
-        res = json.loads(vol.stdout.readline())
+        output = vol.stdout.read()
+        log.debug("Volatility ouput: " + output)
+        res = json.loads(output)
     except Exception as ex:
         log.error('Failed to read JSON from volatility: ' + str(ex))
         vol.terminate()
@@ -156,27 +200,43 @@ def vol_cr3_lookup(qemu, trace_path, proc_name):
         return (0, 0)
 
 def exec_cmd(qemu, command):
+    """Send a command to a QEMU instance.
+
+    Keyword arguments:
+    qemu -- A subprocess object representing a QEMU instance.
+    command -- The command string to send.
+    """
     qemu.stdin.write(str(command) + "\n")
-    sys.stdout.write(qemu.stdout.readline())
+    qemu.stdout.readline()
 
 def flush_qemu(qemu):
+    """Flush QEMU's stdout.
+
+    Keyword Arguments:
+    qemu -- A subprocess object representing a QEMU instance.
+    """
     char = ''
     while char != ')':
         char = qemu.stdout.read(1)
-        sys.stdout.write(char)
-        sys.stdout.flush()
 
 def terminate_qemu(qemu, force=False):
-        qemu.stdin.write("quit\n")
-        qemu.stdin.close()
-        if force:
-            subprocess.call(['sudo', 'kill', '-9', str(qemu.pid)])
-        sleep(10)  # TODO - Cleanup - Allow time for VM to terminate
+    """Terminates a QEMU instance.
+
+    Keyword arguments:
+    qemu -- A subprocess object representing a QEMU instance.
+    force -- If true, will send a SIGTERM if needed.
+    """
+    qemu.stdin.write("quit\n")
+    qemu.stdin.close()
+    if force:
+        subprocess.call(['sudo', 'kill', '-9', str(qemu.pid)])
+    sleep(10)  # Allow time for VM to terminate
 
 def init_socket():
     """Initialize the socket for sending inputs/jobs to the guest VM"""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(conf['timeout'])
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         sock.bind((conf['host_ip'], 52175))
     except socket.error:
@@ -196,7 +256,7 @@ def send_file(conn, src, isfile=True):
     Return:
     0 if successful, otherwise an error number.
     """
-    if isfile and not path.isfile(src):
+    if isfile and not os.path.isfile(src):
         log.error(src + " is not a file, nothing to send!")
         return 0
 
@@ -249,15 +309,15 @@ def run_job(job, sock, ifup):
 
     # Check if output dir already exists, then create
     trace_path = 'traces/' + str(job['id'])
-    if path.isdir(trace_path) and path.isfile(trace_path + '/trace_0.gz'):
+    if os.path.isdir(trace_path) and os.path.isfile(trace_path + '/trace_0.gz'):
         log.warning('A trace already exists for ' + job['name'] + ' skipping...')
         return
-    elif path.isdir(trace_path):
+    elif os.path.isdir(trace_path):
         log.debug('A trace directory exists for ' + job['name'] + ' but it does not contain a trace')
     else:
         log.debug('Creating output directory for ' + job['name'])
         try:
-            mkdir(trace_path)
+            os.mkdir(trace_path)
         except:
             log.error('Failed to create dir ' + trace_path)
             return
@@ -274,7 +334,8 @@ def run_job(job, sock, ifup):
 
     # Create and start snapshot of base VM
     job['vm_disk'] = trace_path + '/disk.qcow2'
-    ret = subprocess.call(['qemu-img', 'create', '-f', 'qcow2', '-o', 'backing_file=' + job['base_img'], job['vm_disk']])
+    ret = subprocess.call(['qemu-img', 'create', '-f', 'qcow2', '-o', 'backing_file=' + job['base_img'],
+                          job['vm_disk']], stdout=DEVNULL)
     if ret != 0:
         log.error('qemu-img return code ' + str(ret))
         subprocess.call(['rm', '-rf', trace_path])
@@ -293,7 +354,8 @@ def run_job(job, sock, ifup):
                              '-vnc', ':0',
                              '-monitor', 'stdio'],
                              stdin=subprocess.PIPE,
-                             stdout=subprocess.PIPE)
+                             stdout=subprocess.PIPE,
+                             stderr=DEVNULL)
     flush_qemu(qemu)
 
     log.info("Waiting for VM agent to call home")
@@ -306,7 +368,7 @@ def run_job(job, sock, ifup):
         subprocess.call(['rm', '-rf', trace_path])
         return
 
-    log.info("Sending job")
+    log.info("Sending job to " + str(addr[0]))
     if send_file(conn, options.job):
         log.error("Failed to send job, cannot continue")
         terminate_qemu(qemu, True)
@@ -369,7 +431,7 @@ def run_job(job, sock, ifup):
     exec_cmd(qemu, "pt disable 0")
     terminate_qemu(qemu)
     # Postmortem analysis
-    log.info('Starting postmortem analysis for ' + job['name'])
+    log.info('Post-processing ' + job['name'])
     # Extract memory mapping
     maps_filepath = trace_path + '/mapping.txt'
     ofile = open(maps_filepath, 'w')
@@ -378,7 +440,8 @@ def run_job(job, sock, ifup):
                      '--profile', 'Win7SP1x64',
                      '-f', trace_path + '/dump.qemu',
                      '-p', str(pid)],
-                     stdout=ofile)
+                     stdout=ofile,
+                     stderr=DEVNULL)
     ofile.close()
 
     # TODO - Extract and expand binaries
@@ -392,14 +455,23 @@ def run_job(job, sock, ifup):
     log.info('Finished ' + job['name'])
 
 def perform_checks():
+    """Performs some sanity checks.
+
+    Checks that run.py is executing in the correct working directory and that
+    some necessary files and binaries exist.
+
+    Returns:
+    True if all checks pass, otherwise False. If return is False, it is not safe
+    to proceed with execution.
+    """
     # Check that we're in the correct working directory
     o_dirs = ['extract', 'inputs', 'traces']
     for dir in o_dirs:
-        if not path.isdir(dir):
+        if not os.path.isdir(dir):
             log.error('Expected to see ' + dir + ', am I running in the correct working directory?')
             return False
     # Check that we have a network block device for mounting qcows
-    if not path.exists('/dev/nbd0'):
+    if not os.path.exists('/dev/nbd0'):
         log.error('Cannot find QEMU network block device /dev/nbd0, did you run `sudo modprobe nbd`?')
         return False
     if not check_qemu_version():
@@ -454,13 +526,13 @@ def parse_args():
 
     # Input validation
     errors = False
-    if not path.isfile(options.agent_conf):
+    if not os.path.isfile(options.agent_conf):
         log.error("File not found: " + options.agent_conf)
         errors = True
-    if not path.isfile(options.job):
+    if not os.path.isfile(options.job):
         log.error("File not found: " + options.job)
         errors = True
-    if not options.vm or not path.isfile(options.vm):
+    if not options.vm or not os.path.isfile(options.vm):
         log.error("File not found: " + str(options.vm))
         errors = True
     if not options.benign and not options.malicious:
@@ -490,16 +562,19 @@ def main():
     if jobs_pend < 1:
         log.error('No jobs found')
         sys.exit(3)
+    log.info("Found " + str(jobs_pend) + " job(s)")
     for job in jobs:
         run_job(job, sock, ifup)
         jobs_pend -= 1
-        log.info(str(jobs_pend) + ' jobs remaining...')
+        log.info(str(jobs_pend) + ' jobs remaining')
 
     # Cleanup
-    remove(ifup)
+    os.remove(ifup)
     sock.close()
 
 if __name__ == '__main__':
+    DEVNULL = open(os.devnull, 'w')  # Useful for silencing a lot of outputs
+
     log = logging.getLogger('barnum-tracer')
     handler = logging.StreamHandler(sys.stdout)
     formatter = logging.Formatter('%(asctime)-15s [%(levelname)s] %(message)s')
@@ -509,3 +584,5 @@ if __name__ == '__main__':
     options = parse_args()
     conf = parse_conf(options.agent_conf)
     main()
+
+    DEVNULL.close()
