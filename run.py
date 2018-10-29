@@ -79,7 +79,7 @@ def post_processing(vm_disk, maps_fp, partition=2):
     if ret != 0:
         log.error('qemu-nbd returned code: ' + str(ret))
         return 1
-    ret = subprocess.call(['sudo', 'mount', '/dev/nbd0', temp_dir])
+    ret = subprocess.call(['sudo', 'mount', '-o', 'ro', '/dev/nbd0', temp_dir])
     if ret != 0:
         log.error('mount returned code: ' + str(ret))
         return 3
@@ -106,7 +106,7 @@ def post_processing(vm_disk, maps_fp, partition=2):
             ofile.write(data)
 
     log.debug("Unmounting " + vm_disk)
-    subprocess.call(['sudo', 'sync'])  # Without this, umount may fail because of busy device
+    sleep(2)  # Give time for I/O to complete. Not an elegant solution.
     subprocess.call(['sudo', 'umount', temp_dir])
     subprocess.call(['sudo', nbd_path, '--disconnect', '/dev/nbd0'], stdout=DEVNULL, stderr=DEVNULL)
     subprocess.call(['rm', '-rf', temp_dir])
