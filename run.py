@@ -32,6 +32,7 @@ if sys.version_info.major <= 2:
     from ConfigParser import RawConfigParser, NoOptionError
 else:
     from configparser import RawConfigParser, NoOptionError
+import pefile
 
 ifup_script = """#!/bin/sh
 set -x
@@ -50,33 +51,67 @@ else
 fi
 """
 
-# TODO - Remove
-"""
-        # Create VM disk for job
-        vm_disk = temp_dir + '/' + str(id) + '.qcow2'
-        ret = subprocess.call(['qemu-img', 'create', '-f', 'qcow2', '-o', 'backing_file=' + base_img, vm_disk])
-        if ret != 0:
-            print 'ERROR: qemu-img return code', ret
+def post_processing(vm_disk, maps_fp, partition=2):
+    """Performs post-processing on a trace session.
+
+    Specifically, it mounts the VM disk, extracts all the binaries that were loaded during
+    execution, expands them into their in-memory layouts, and saves them to the extract directory.
+
+    Keyword Arguments:
+    vm_disk -- Filepath to the QCOW2 VM disk.
+    maps_fp -- Filepath to maps file.
+    partition -- Partition number to mount. 2 by default, which is the norm for Windows 7.
+
+    Returns:
+    0 upon success, otherwise a non-zero error code.
+    """
+    if not os.path.isfile(vm_disk):
+        log.error(vm_disk + " is not a file")
+        return 2
+    if not os.path.isfile(maps_fp):
+        log.error(maps_fp + " is not a file")
+        return 4
+
+    log.debug("Mounting " + vm_disk)
+    nbd_path = lookup_bin('qemu-nbd')
+    temp_dir = tempfile.mkdtemp()
+    ret = subprocess.call(['sudo', nbd_path, '--connect=/dev/nbd0', vm_disk, '-P', str(partition)])
+    if ret != 0:
+        log.error('qemu-nbd returned code: ' + str(ret))
+        return 1
+    ret = subprocess.call(['sudo', 'mount', '/dev/nbd0', temp_dir])
+    if ret != 0:
+        log.error('mount returned code: ' + str(ret))
+        return 3
+
+    log.debug("Parsing " + maps_fp)
+    with open(maps_fp) as ifile:
+        # Note: we intentionally remove the leading / to make a relative path
+        bins = [line[70:].replace('\\', '/').strip() for line in ifile.readlines()
+                if len(line) >= 69 and line[69] == "\\"]
+
+    log.debug("Expanding " + str(len(bins)) + " binaries")
+    for bin in bins:
+        binpath = os.path.join(temp_dir, bin)
+        opath = 'extract/' + os.path.basename(binpath)
+        if not os.path.isfile(binpath):
+            log.debug("Cannot find " + binpath)
             continue
-        # Mount disk and insert PDF file
-        ret = subprocess.call(['sudo', nbd_path, '--connect=/dev/nbd0', vm_disk, '-P', '2'])
-        if ret != 0:
-            print 'ERROR: qemu-nbd returned code', ret
+        if os.path.isfile(opath):
+            log.debug("Already expanded " + opath + ", skipping")
             continue
-        ret = subprocess.call(['sudo', 'mount', '/dev/nbd0', temp_dir + '/mount'])
-        if ret != 0:
-            print 'ERROR: mount returned code', ret
-            continue
-        copyfile(pdf_filepath, temp_dir + '/mount/file.pdf')
-        ret = subprocess.call(['sudo', 'umount', temp_dir + '/mount'])
-        if ret != 0:
-            print 'ERROR: umount returned code', ret
-            return jobs # Fatal, cannot continue
-        ret = subprocess.call(['sudo', nbd_path, '--disconnect', '/dev/nbd0'])
-        if ret != 0:
-            print 'ERROR: qemu-nbd returned code', ret
-            return jobs # Fatal, cannot continue
-"""
+        pe = pefile.PE(binpath)
+        data = pe.get_memory_mapped_image()
+        with open(opath, 'wb') as ofile:
+            ofile.write(data)
+
+    log.debug("Unmounting " + vm_disk)
+    subprocess.call(['sudo', 'sync'])  # Without this, umount may fail because of busy device
+    subprocess.call(['sudo', 'umount', temp_dir])
+    subprocess.call(['sudo', nbd_path, '--disconnect', '/dev/nbd0'], stdout=DEVNULL, stderr=DEVNULL)
+    subprocess.call(['rm', '-rf', temp_dir])
+
+    return 0
 
 def watch_file(filepath):
     """Waits until a file stops growing and then returns.
@@ -334,8 +369,15 @@ def run_job(job, sock, ifup):
 
     # Create and start snapshot of base VM
     job['vm_disk'] = trace_path + '/disk.qcow2'
+    clean_disk = trace_path + '/disk-clean.qcow'  # A second, clean disk for post-processing
     ret = subprocess.call(['qemu-img', 'create', '-f', 'qcow2', '-o', 'backing_file=' + job['base_img'],
                           job['vm_disk']], stdout=DEVNULL)
+    if ret != 0:
+        log.error('qemu-img return code ' + str(ret))
+        subprocess.call(['rm', '-rf', trace_path])
+        return
+    ret = subprocess.call(['qemu-img', 'create', '-f', 'qcow2', '-o', 'backing_file=' + job['base_img'],
+                          clean_disk], stdout=DEVNULL)
     if ret != 0:
         log.error('qemu-img return code ' + str(ret))
         subprocess.call(['rm', '-rf', trace_path])
@@ -444,14 +486,15 @@ def run_job(job, sock, ifup):
                      stderr=DEVNULL)
     ofile.close()
 
-    # TODO - Extract and expand binaries
-    log.warning("Binary extraction and expansion not implemented yet!")
+    log.info("Performing post-processing")
+    res = post_processing(clean_disk, maps_filepath)
+    if res != 0:
+        log.warning("Post-processing returned an error code: " + str(res))
 
     # Compress results and delete dump.qemu to save space
     subprocess.call(['gzip', trace_path + '/trace_0'])
     subprocess.call(['gzip', maps_filepath])
-    subprocess.call(['rm', '-f', trace_path + '/dump.qemu'])
-    subprocess.call(['rm', '-f', job['vm_disk']])
+    subprocess.call(['rm', '-f', trace_path + '/dump.qemu', job['vm_disk'], clean_disk])
     log.info('Finished ' + job['name'])
 
 def perform_checks():
