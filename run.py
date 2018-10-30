@@ -24,10 +24,10 @@ import subprocess
 import sys
 import socket
 import tempfile
-import hashlib
 from time import sleep
 import logging
 from struct import pack, unpack
+from hashlib import sha256
 from optparse import OptionParser, OptionGroup
 if sys.version_info.major <= 2:
     from ConfigParser import RawConfigParser, NoOptionError
@@ -150,16 +150,18 @@ def lookup_bin(name):
     p = subprocess.Popen(['which', name], stdout=subprocess.PIPE)
     return p.stdout.read().strip()
 
-def sha256(filepath):
+def sha256_file(filepath):
     """Calculates a SHA256 hash of a file's contents.
 
     Keyword Arguments:
     filepath -- The file whose contents should be hashed.
+
+    Returns:
+    A hex digest of the file's contents.
     """
-    sha256sum = subprocess.Popen(['sha256sum', filepath], stdout=subprocess.PIPE)
-    hash = sha256sum.stdout.readline().split(' ')[0]
-    sha256sum.terminate()
-    return hash
+    with open(filepath, 'rb') as ifile:
+        data = ifile.read()
+    return sha256(data).hexdigest()
 
 def prepare_jobs():
     """Scan the inputs directory and prepare jobs."""
@@ -177,7 +179,7 @@ def prepare_jobs():
         if entry == 'README':
             continue  # Skip the README file
         filepath = 'inputs/' + entry
-        id = sha256(filepath)
+        id = sha256_file(filepath)
         base_img = os.getcwd() + '/' + options.vm
         jobs.append({'id': id, 'name': entry, 'filepath': filepath, 'vm_disk': None, 'base_img': base_img})
 
@@ -302,7 +304,7 @@ def send_file(conn, src, isfile=True):
     else:
         data = src
 
-    checksum = hashlib.sha256(data).digest()[:4]
+    checksum = sha256(data).digest()[:4]
     data_size = len(data)
     try:
         conn.sendall(pack('!L4s', data_size, checksum) + data)
@@ -331,7 +333,7 @@ def recv_file(sock):
         data += sock.recv(min(remain, 1024))
         remain = size - len(data)
 
-    if checksum != hashlib.sha256(data).digest()[:4]:
+    if checksum != sha256(data).digest()[:4]:
         log.error('Checksum does not match')
         return None
 
