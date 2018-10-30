@@ -24,6 +24,7 @@ import subprocess
 import sys
 import socket
 import tempfile
+import hashlib
 from time import sleep
 import logging
 from struct import pack, unpack
@@ -296,14 +297,15 @@ def send_file(conn, src, isfile=True):
         return 0
 
     if isfile:
-        with open(src, 'r') as ifile:
+        with open(src, 'rb') as ifile:
             data = ifile.read()
     else:
         data = src
 
+    checksum = hashlib.sha256(data).digest()[:4]
     data_size = len(data)
     try:
-        conn.sendall(pack('!L', data_size) + data)
+        conn.sendall(pack('!L4s', data_size, checksum) + data)
     except Exception as ex:
         log.error("Error occurred while trying to send file: " + str(ex))
         return 1
@@ -313,18 +315,25 @@ def recv_file(sock):
 
     Keyword Arguments:
     sock -- A connected socket to recieve from.
+
+    Returns:
+    Data on success, otherwise None.
     """
     try:
-        size = unpack('!L', sock.recv(4))[0]
+        size, checksum = unpack('!L4s', sock.recv(8))
     except Exception as ex:
         log.error("Error occurred while trying to receive file: " + str(ex))
-        return ''
+        return None
 
     remain = size
     data = ''
     while remain > 0:
-        data += sock.recv(min(remain, 4096))
+        data += sock.recv(min(remain, 1024))
         remain = size - len(data)
+
+    if checksum != hashlib.sha256(data).digest()[:4]:
+        log.error('Checksum does not match')
+        return None
 
     return data
 
@@ -427,6 +436,10 @@ def run_job(job, sock, ifup):
     errors = False
     while (True):
         cmd = recv_file(conn)
+        if cmd is None:
+            log.warning("Failed to recieve data from agent")
+            errors = True
+            break
         cmd_len = len(cmd)
 
         if cmd_len >=2 and cmd[:2] == 'pt':

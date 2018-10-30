@@ -24,6 +24,7 @@
 import os
 import socket
 import sys
+import hashlib
 from time import sleep
 from struct import pack, unpack
 from subprocess import call, Popen, check_output
@@ -51,21 +52,22 @@ def send_file(conn, src, isfile=True):
     Return:
     0 if successful, otherwise an error number.
     """
-    if isfile and not path.isfile(src):
-        log.error(src + " is not a file, nothing to send!")
+    if isfile and not os.path.isfile(src):
+        sys.stderr.write(src + " is not a file, nothing to send!\n")
         return 0
 
     if isfile:
-        with open(src, 'r') as ifile:
+        with open(src, 'rb') as ifile:
             data = ifile.read()
     else:
         data = src
 
+    checksum = hashlib.sha256(data).digest()[:4]
     data_size = len(data)
     try:
-        conn.sendall(pack('!L', data_size) + data)
+        conn.sendall(pack('!L4s', data_size, checksum) + data)
     except Exception as ex:
-        log.error("Error occurred while trying to send file: " + str(ex) + "\n")
+        sys.stderr.write("Error occurred while trying to send file: " + str(ex) + "\n")
         return 1
 
 def recv_file(sock):
@@ -73,18 +75,25 @@ def recv_file(sock):
 
     Keyword Arguments:
     sock -- A connected socket to recieve from.
+
+    Returns:
+    Data on success, otherwise None.
     """
     try:
-        size = unpack('!L', sock.recv(4))[0]
+        size, checksum = unpack('!L4s', sock.recv(8))
     except Exception as ex:
         sys.stderr.write("Error occurred while trying to receive file: " + str(ex) + "\n")
-        sys.exit(3)
+        return None
 
     remain = size
     data = ''
     while remain > 0:
-        data += sock.recv(min(remain, 4096))
+        data += sock.recv(min(remain, 1024))
         remain = size - len(data)
+
+    if checksum != hashlib.sha256(data).digest()[:4]:
+        sys.stderr.write("Checksum does not match\n")
+        return None
 
     return data
 
