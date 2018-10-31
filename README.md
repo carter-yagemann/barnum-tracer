@@ -66,19 +66,19 @@ from the earlier example, the default configuration will work fine.
 Job scripts tell the virtual machine agent what to do. See `jobs/example.job` for an example of tracing Acrobat
 Reader on a Windows guest. The following is a list of currently supported commands:
 
-* `save <filepath>` -- This should always be the first command. It saves the input sample to `filepath`.
+* `save <filepath>`: This should always be the first command. It saves the input sample to `filepath`.
 
-* `async <cmd>` -- Executes `cmd` without blocking.
+* `async <cmd>`: Executes `cmd` without blocking.
 
-* `exec <cmd>` -- Executes `cmd` and waits for it to finish before continuing.
+* `exec <cmd>`: Executes `cmd` and waits for it to finish before continuing.
 
-* `vmi <process_name> -- Instructs the host to lookup the PID and CR3 for `process_name`. This command must be
+* `vmi <process_name>`: Instructs the host to lookup the PID and CR3 for `process_name`. This command must be
 executed before the `pt` command can be used.
 
-* `pt` -- Starts tracing. After this, the server will close the connection to the agent, so the commands `vmi`,
+* `pt`: Starts tracing. After this, the server will close the connection to the agent, so the commands `vmi`,
 `save`, and `pt` can no longer be used.
 
-* `sleep <sec>` -- The agent will sleep for `sec` seconds.
+* `sleep <sec>`: The agent will sleep for `sec` seconds.
 
 # Usage
 
