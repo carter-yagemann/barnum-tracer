@@ -151,8 +151,23 @@ def move_mouse():
     USER32.SetCursorPos(x, y)
 
 def click_mouse():
-    # Move mouse to top-middle position.
+    # Move mouse to middle-top position.
     USER32.SetCursorPos(RESOLUTION["x"] / 2, 0)
+    # Mouse down.
+    USER32.mouse_event(2, 0, 0, 0, None)
+    KERNEL32.Sleep(50)
+    # Mouse up.
+    USER32.mouse_event(4, 0, 0, 0, None)
+
+def double_click_mouse():
+    # Move mouse to random-middle position.
+    USER32.SetCursorPos(random.randint(0, RESOLUTION["x"]), RESOLUTION["y"] / 2)
+    # Mouse down.
+    USER32.mouse_event(2, 0, 0, 0, None)
+    KERNEL32.Sleep(50)
+    # Mouse up.
+    USER32.mouse_event(4, 0, 0, 0, None)
+    KERNEL32.Sleep(50)
     # Mouse down.
     USER32.mouse_event(2, 0, 0, 0, None)
     KERNEL32.Sleep(50)
@@ -166,7 +181,10 @@ def monkey():
         if seconds and not seconds % 60:
             USER32.EnumWindows(EnumWindowsProc(get_office_window), 0)
 
-        click_mouse()
+        if seconds and not seconds % 5:
+            double_click_mouse()
+        else:
+            click_mouse()
         move_mouse()
         USER32.EnumWindows(EnumWindowsProc(foreach_window), 0)
 
