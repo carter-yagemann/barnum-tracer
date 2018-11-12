@@ -26,3 +26,6 @@ pt
 exec C:\file.pdf
 
 # And that's it!
+
+# Note: If we want to simulate human interaction, we can change the last
+# command from exec to async and then add the command "monkey".

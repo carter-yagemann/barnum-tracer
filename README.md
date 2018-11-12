@@ -80,6 +80,9 @@ executed before the `pt` command can be used.
 
 * `sleep <sec>`: The agent will sleep for `sec` seconds.
 
+* `monkey`: Start clicking, moving the mouse, etc. to simulate human interation. The agent will not run any
+commands after this, so `monkey` can only be the last command in a job script.
+
 # Usage
 
 See `./run.py --help` for details:
