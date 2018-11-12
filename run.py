@@ -26,6 +26,7 @@ import socket
 import tempfile
 from time import sleep
 import logging
+from shutil import copyfile
 from struct import pack, unpack
 from hashlib import sha256
 from optparse import OptionParser, OptionGroup
@@ -105,10 +106,55 @@ def post_processing(vm_disk, maps_fp, partition=2):
         data = pe.get_memory_mapped_image()
         with open(opath, 'wb') as ofile:
             ofile.write(data)
+        pe.close()
 
     log.debug("Unmounting " + vm_disk)
-    sleep(2)  # Give time for I/O to complete. Not an elegant solution.
-    subprocess.call(['sudo', 'umount', temp_dir])
+    ret = 1
+    while ret != 0:
+        sleep(2)  # Give time for I/O to complete
+        ret = subprocess.call(['sudo', 'umount', temp_dir], stdout=DEVNULL, stderr=DEVNULL)
+    subprocess.call(['sudo', nbd_path, '--disconnect', '/dev/nbd0'], stdout=DEVNULL, stderr=DEVNULL)
+    subprocess.call(['rm', '-rf', temp_dir])
+
+    return 0
+
+def transfer_sample(vm_disk, file_fp, partition=2):
+    """Copies the input sample into the guest virtual machine.
+
+    Keyword Arguments:
+    vm_disk -- Filepath to the QCOW2 VM disk.
+    file_fp -- Path to file to copy over into guest.
+    partition -- Partition number to mount. 2 by default, which is the norm for Windows 7.
+
+    Returns:
+    0 upon success, otherwise a non-zero error code.
+    """
+    if not os.path.isfile(file_fp):
+        log.error(file_fp + " is not a file")
+        return 1
+    if not os.path.isfile(vm_disk):
+        log.error(vm_disk + " is not a file")
+        return 2
+
+    log.debug("Mounting " + vm_disk)
+    nbd_path = lookup_bin('qemu-nbd')
+    temp_dir = tempfile.mkdtemp()
+    ret = subprocess.call(['sudo', nbd_path, '--connect=/dev/nbd0', vm_disk, '-P', str(partition)])
+    if ret != 0:
+        log.error('qemu-nbd returned code: ' + str(ret))
+        return 1
+    ret = subprocess.call(['sudo', 'mount', '/dev/nbd0', temp_dir])
+    if ret != 0:
+        log.error('mount returned code: ' + str(ret))
+        return 3
+
+    copyfile(file_fp, temp_dir + "/data")
+
+    log.debug("Unmounting " + vm_disk)
+    ret = 1
+    while ret != 0:
+        sleep(2)  # Give time for I/O to complete
+        ret = subprocess.call(['sudo', 'umount', temp_dir], stdout=DEVNULL, stderr=DEVNULL)
     subprocess.call(['sudo', nbd_path, '--disconnect', '/dev/nbd0'], stdout=DEVNULL, stderr=DEVNULL)
     subprocess.call(['rm', '-rf', temp_dir])
 
@@ -339,7 +385,7 @@ def recv_file(sock):
 
     return data
 
-def run_job(job, sock, ifup):
+def run_job(job, ifup):
     """ Runs one job.
 
     Keyword Arguments:
@@ -351,6 +397,11 @@ def run_job(job, sock, ifup):
     nbd_path = lookup_bin('qemu-nbd')
     if len(qemu_path) == 0 or len(nbd_path) == 0:
         log.error('Cannot find qemu-system-x86_64 and/or qemu-nbd')
+        return
+
+    sock = init_socket()
+    if sock is None:
+        log.error("Failed to create socket")
         return
 
     # Check if output dir already exists, then create
@@ -394,6 +445,8 @@ def run_job(job, sock, ifup):
         subprocess.call(['rm', '-rf', trace_path])
         return
 
+    transfer_sample(job['vm_disk'], job['filepath'])
+
     log.debug('Starting VM for ' + job['name'])
     qemu = subprocess.Popen(['sudo', qemu_path,
                              '-enable-kvm',
@@ -424,11 +477,6 @@ def run_job(job, sock, ifup):
     log.info("Sending job to " + str(addr[0]))
     if send_file(conn, options.job):
         log.error("Failed to send job, cannot continue")
-        terminate_qemu(qemu, True)
-        subprocess.call(['rm', '-rf', trace_path])
-        return
-    if send_file(conn, job['filepath']):
-        log.error("Failed to send input sample, cannot continue")
         terminate_qemu(qemu, True)
         subprocess.call(['rm', '-rf', trace_path])
         return
@@ -473,7 +521,7 @@ def run_job(job, sock, ifup):
                 break
             send_file(conn, "OKAY", False)
 
-    conn.shutdown(socket.SHUT_RDWR)
+    sock.close()
 
     if errors:
         log.error("Errors occurred while running job, destroying VM and output")
@@ -501,7 +549,6 @@ def run_job(job, sock, ifup):
                      stderr=DEVNULL)
     ofile.close()
 
-    log.info("Performing post-processing")
     res = post_processing(clean_disk, maps_filepath)
     if res != 0:
         log.warning("Post-processing returned an error code: " + str(res))
@@ -610,10 +657,6 @@ def main():
     """ Main method. """
     if not perform_checks():
         sys.exit(2)
-    sock = init_socket()
-    if sock is None:
-        log.error("Failed to create socket")
-        sys.exit(6)
     jobs, ifup = prepare_jobs()
 
     jobs_pend = len(jobs)
@@ -622,13 +665,12 @@ def main():
         sys.exit(3)
     log.info("Found " + str(jobs_pend) + " job(s)")
     for job in jobs:
-        run_job(job, sock, ifup)
+        run_job(job, ifup)
         jobs_pend -= 1
         log.info(str(jobs_pend) + ' jobs remaining')
 
     # Cleanup
     os.remove(ifup)
-    sock.close()
 
 if __name__ == '__main__':
     DEVNULL = open(os.devnull, 'w')  # Useful for silencing a lot of outputs
