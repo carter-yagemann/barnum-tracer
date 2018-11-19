@@ -535,6 +535,12 @@ def run_job(job, ifup):
     # Disable PT and destroy VM
     exec_cmd(qemu, "pt disable 0")
     terminate_qemu(qemu)
+
+    if os.path.getsize(trace_path + "/trace_0") == 0:
+        log.error("Trace output is empty, cannot continue with this job")
+        subprocess.call(['rm', '-rf', trace_path])
+        return
+
     # Postmortem analysis
     log.info('Post-processing ' + job['name'])
     # Extract memory mapping
