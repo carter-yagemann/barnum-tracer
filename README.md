@@ -29,6 +29,10 @@ You also need to insert the `nbd` kernel module. As root:
 
     insmod nbd
 
+And the host needs volatility:
+
+    sudo apt install volatility
+
 Lastly, make sure to install the needed python modules:
 
     pip install -r requirements.txt
