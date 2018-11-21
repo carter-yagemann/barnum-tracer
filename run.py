@@ -252,7 +252,7 @@ def vol_cr3_lookup(qemu, trace_path, proc_name):
     pid = 0
     vol = subprocess.Popen(['volatility',
                             'psscan',
-                            '--profile', 'Win7SP1x64',
+                            '--profile', conf['profile'],
                             '--output=json',
                             '-f', trace_path + '/dump.qemu'],
                             stdout=subprocess.PIPE,
@@ -601,6 +601,7 @@ def parse_conf(conf_path):
             'host_ip':  config.get('main', 'host_ip'),
             'runtime':  config.getint('main', 'runtime'),
             'timeout':  config.getint('main', 'timeout'),
+            'profile':  config.get('main', 'profile'),
         }
     except (NoOptionError, ValueError) as e:
         log.error('Configuration is missing parameters. See example.conf.')
