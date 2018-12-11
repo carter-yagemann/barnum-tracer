@@ -1,7 +1,7 @@
 # Overview
 
-Barnum-Tracer collects Intel PT traces for use by Barnum-Learner. Together, these two parts form Barnum:
-an end-to-end system for program control-flow anomaly detection.
+Barnum-Tracer collects Intel PT traces for use by [Barnum-Learner](https://github.com/carter-yagemann/barnum-learner).
+Together, these two parts form Barnum: an end-to-end system for program control-flow anomaly detection.
 
 At a high level, Barnum-Tracer requires the following things:
 
