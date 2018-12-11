@@ -1,3 +1,0 @@
-[submodule "kAFL"]
-	path = kAFL
-	url = git@github.com:carter-yagemann/barnum-kAFL.git
