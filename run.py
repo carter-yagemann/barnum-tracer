@@ -222,8 +222,8 @@ def prepare_jobs():
     jobs = []
     listing = os.listdir('inputs')
     for entry in listing:
-        if entry == 'README':
-            continue  # Skip the README file
+        if entry == '.gitignore':
+            continue  # Skip this file
         filepath = 'inputs/' + entry
         id = sha256_file(filepath)
         base_img = os.getcwd() + '/' + options.vm
