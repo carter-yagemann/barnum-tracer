@@ -114,3 +114,7 @@ See `./run.py --help` for details:
 Place your input samples in the `inputs/` directory. Traces will be saved to `traces/` (one directory per
 input sample). Extracted binaries will appear in `extract/`. Both of these outputs are needed by
 Barnum Learner.
+
+# Improving Results
+
+Consult `GUIDE.md` for tips and tricks on how to get the best possible results.
