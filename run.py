@@ -399,6 +399,11 @@ def run_job(job, ifup):
         log.error('Cannot find qemu-system-x86_64 and/or qemu-nbd')
         return
 
+    vol_path = lookup_bin('volatility')
+    if len(vol_path) == 0:
+        log.error('Cannot find volatility')
+        return
+
     sock = init_socket()
     if sock is None:
         log.error("Failed to create socket")
